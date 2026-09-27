@@ -1,16 +1,16 @@
 # Implementation Plan
 
 ## Phase 0 — Setup
-- **Tasks:** Repo scaffolding (frontend/backend/docker-compose), Postgres schema migration (Alembic) from `DATABASE_SCHEMA.md`, auth module, CI lint/test hook.
+- **Tasks:** Repo scaffolding (frontend/backend/docker-compose) per `LOCAL_SETUP.md`; Postgres schema migration (Alembic) from `DATABASE_SCHEMA.md`; auth module; CI lint/test hook; create the centralized `core/config.py` module with every named constant from `CONFIGURATION.md` (risk thresholds, confidence weights, recurring tolerances) so no downstream phase invents a threshold inline.
 - **Dependencies:** None.
-- **Output:** Running skeleton app; login works; empty dashboard loads.
-- **Acceptance criteria:** `docker compose up` starts all services; a user can sign up and log in.
+- **Output:** Running skeleton app; login works; empty dashboard loads; `CONFIGURATION.md` values loaded and importable.
+- **Acceptance criteria:** `docker compose up` starts all services per `LOCAL_SETUP.md`; a user can sign up and log in; a test asserts each config constant is loaded from the single config module, not hardcoded elsewhere.
 
 ## Phase 1 — Data Layer
-- **Tasks:** Implement `accounts`, `transactions`, `merchants`, `categories`, `loans`, `credit_cards`, `income_sources` models + repositories; build `POST /transactions` ingestion with validation + dedup; seed script for the 3 personas.
+- **Tasks:** Implement `accounts`, `transactions`, `merchants`, `categories`, `loans`, `credit_cards`, `income_sources` models + repositories; build `POST /transactions` ingestion with validation + dedup; seed script for the 3 personas; CSV upload/preview/confirm endpoints and manual-entry endpoints per the three onboarding modes in `ONBOARDING_AND_DATA_IMPORT.md`.
 - **Dependencies:** Phase 0.
-- **Output:** Seed data loads cleanly; transactions queryable via API.
-- **Acceptance criteria:** Re-running the seed script produces zero duplicate transactions.
+- **Output:** Seed data loads cleanly; transactions queryable via API; a user can alternatively import via CSV or manual entry.
+- **Acceptance criteria:** Re-running the seed script produces zero duplicate transactions; a malformed CSV row is rejected with a per-row error while valid rows still import (per `ONBOARDING_AND_DATA_IMPORT.md` edge cases).
 
 ## Phase 2 — Financial Analytics
 - **Tasks:** Implement all formulas in `FINANCIAL_ANALYTICS.md` as unit-tested pure functions; `GET /financial-summary` endpoint.
@@ -37,10 +37,10 @@
 - **Acceptance criteria:** 0% hallucination rate on the eval set (per `EVALUATION_METRICS.md` methodology).
 
 ## Phase 6 — Frontend
-- **Tasks:** All pages/components from `FRONTEND_ARCHITECTURE.md`; React Query wiring to every endpoint; fact/prediction/recommendation card components; charts.
+- **Tasks:** Establish the design system first — color tokens, typography scale, and the canonical fact/prediction/recommendation/assumption badge component from `UI_UX_DESIGN.md` — before building page-level components, since every page reuses it; then all pages/components from `FRONTEND_ARCHITECTURE.md` including the onboarding flow (persona picker, CSV upload/preview screen, manual-entry forms per `ONBOARDING_AND_DATA_IMPORT.md`); React Query wiring to every endpoint; charts.
 - **Dependencies:** Can start in parallel with Phases 2–5 against mocked API responses matching `API_SPECIFICATION.md`, then swap to real endpoints.
-- **Output:** Full navigable UI for all pages.
-- **Acceptance criteria:** All 5 primary user journeys (`PRODUCT_REQUIREMENTS.md`) completable via UI only.
+- **Output:** Full navigable UI for all pages, including first-run onboarding.
+- **Acceptance criteria:** All 5 primary user journeys (`PRODUCT_REQUIREMENTS.md`) completable via UI only; a new signup can reach a populated dashboard via each of the three onboarding modes; every fact/prediction/recommendation card matches the `UI_UX_DESIGN.md` badge spec.
 
 ## Phase 7 — Integration
 - **Tasks:** Wire frontend to real backend end-to-end; fix contract mismatches; implement `<RecalculationToast>` behavior; polish loading/error states.
