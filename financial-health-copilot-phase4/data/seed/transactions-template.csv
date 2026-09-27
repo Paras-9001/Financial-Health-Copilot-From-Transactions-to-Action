@@ -1,0 +1,4 @@
+date,amount,direction,description,account_name
+2026-09-01,60000.00,credit,SALARY CREDIT,Primary Checking
+2026-09-02,15000.00,debit,RENT SEPTEMBER,Primary Checking
+2026-09-03,620.00,debit,SWIGGY ORDER,Primary Checking
