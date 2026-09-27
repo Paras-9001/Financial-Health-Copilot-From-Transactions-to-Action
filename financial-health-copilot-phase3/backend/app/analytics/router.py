@@ -9,6 +9,7 @@ from app.analytics.repository import AnalyticsRepository
 from app.analytics.schemas import (
     AmortizationScheduleResponse,
     CategorySpendingResponse,
+    DataQualitySchema,
     DebtSummaryResponse,
     FactsSchema,
     FinancialSummaryResponse,
@@ -19,6 +20,7 @@ from app.analytics.schemas import (
 from app.analytics.service import (
     calculate_cash_buffer_days,
     calculate_confidence,
+    calculate_confidence_score,
     calculate_credit_utilization,
     calculate_debt_service_ratio,
     calculate_debt_to_income,
@@ -27,12 +29,16 @@ from app.analytics.service import (
     calculate_expense_to_income,
     calculate_fixed_expenses,
     calculate_health_score,
+    calculate_income_volatility,
     calculate_loan_amortization,
     calculate_monthly_burn,
+    calculate_monthly_history,
+    calculate_monthly_recurring_obligations,
     calculate_recurring_burden_pct,
     calculate_savings,
     calculate_savings_rate,
     calculate_spending_by_category,
+    calculate_spending_volatility,
     calculate_total_expenses,
     calculate_total_income,
     calculate_variable_expenses,
@@ -57,18 +63,15 @@ def resolve_period(
     if not all_txns:
         raise APIError(status=404, code="no_data", message="No transactions found for user")
 
-    if start_date is not None and end_date is not None:
-        if end_date < start_date:
-            raise APIError(
-                status=422,
-                code="validation_error",
-                message="end_date must be on or after start_date",
-            )
-        return start_date, end_date
-
     latest_date = all_txns[-1].txn_date
     resolved_end = end_date or latest_date
-    resolved_start = start_date or (resolved_end - timedelta(days=30))
+    resolved_start = start_date or (resolved_end - timedelta(days=29))
+    if resolved_end < resolved_start:
+        raise APIError(
+            status=422,
+            code="validation_error",
+            message="end_date must be on or after start_date",
+        )
     return resolved_start, resolved_end
 
 
@@ -100,7 +103,7 @@ def get_financial_summary(
     savings_rate = calculate_savings_rate(total_income, total_expenses)
     expense_to_income = calculate_expense_to_income(total_expenses, total_income)
 
-    days_in_period = max(1, (resolved_end - resolved_start).days)
+    days_in_period = (resolved_end - resolved_start).days + 1
     monthly_burn = calculate_monthly_burn(total_expenses, days_in_period)
 
     # Debt payments
@@ -122,10 +125,28 @@ def get_financial_summary(
     )
 
     # Recurring obligations
-    recurring_total = sum(
-        (r.expected_amount for r in recurring if r.status == "confirmed"), Decimal("0.00")
-    ) + sum((loan.monthly_installment for loan in loans), Decimal("0.00"))
+    recurring_total = calculate_monthly_recurring_obligations(recurring) + sum(
+        (loan.monthly_installment for loan in loans), Decimal("0.00")
+    )
     recurring_burden = calculate_recurring_burden_pct(recurring_total, total_income)
+
+    all_transactions = repo.get_user_transactions(user.id)
+    monthly_incomes, monthly_discretionary = calculate_monthly_history(
+        all_transactions, cat_map, resolved_end
+    )
+    income_cv = calculate_income_volatility(monthly_incomes)
+    spending_cv = calculate_spending_volatility(monthly_discretionary)
+    observation_periods = len(monthly_incomes)
+    insufficient_history = observation_periods < 2
+
+    categorized_count = sum(txn.category_id is not None for txn in txns)
+    data_completeness = Decimal(categorized_count) / Decimal(len(txns)) if txns else Decimal("0.00")
+    eligible_history = [txn for txn in all_transactions if txn.txn_date <= resolved_end]
+    days_since_latest = (
+        (resolved_end - max(txn.txn_date for txn in eligible_history)).days if eligible_history else 30
+    )
+    data_freshness = max(Decimal("0.00"), Decimal("1.00") - Decimal(days_since_latest) / Decimal("30"))
+    historical_consistency = max(Decimal("0.00"), Decimal("1.00") - max(income_cv, spending_cv))
 
     health_score_val = calculate_health_score(
         savings_rate=savings_rate,
@@ -135,13 +156,23 @@ def get_financial_summary(
         preferred_buffer_days=user.preferred_buffer_days,
         recurring_burden_pct=recurring_burden,
     )
-    confidence_val = calculate_confidence(
-        data_completeness=Decimal("1.0"),
-        data_freshness=Decimal("1.0"),
-        historical_consistency=Decimal("0.98"),
+    confidence_score = calculate_confidence_score(
+        data_completeness=data_completeness,
+        data_freshness=data_freshness,
+        historical_consistency=historical_consistency,
         forecast_uncertainty=Decimal("0.8"),
-        observation_count_periods=3,
+        observation_count_periods=observation_periods,
     )
+    confidence_val = calculate_confidence(
+        data_completeness=data_completeness,
+        data_freshness=data_freshness,
+        historical_consistency=historical_consistency,
+        forecast_uncertainty=Decimal("0.8"),
+        observation_count_periods=observation_periods,
+    )
+    if insufficient_history:
+        confidence_score = min(confidence_score, Decimal("0.39"))
+        confidence_val = "low"
 
     # Record snapshot in background / audit table
     repo.save_snapshot(
@@ -160,6 +191,7 @@ def get_financial_summary(
         metric_period_start=resolved_start,
         metric_period_end=resolved_end,
     )
+    db.commit()
 
     return FinancialSummaryResponse(
         period=PeriodSchema(start=resolved_start, end=resolved_end),
@@ -181,8 +213,19 @@ def get_financial_summary(
             credit_utilization=str(quantize_2(credit_util)),
             debt_service_ratio=str(quantize_2(debt_service_ratio)),
             expense_to_income=str(quantize_2(expense_to_income)),
+            income_cv=str(quantize_2(income_cv)),
+            spending_cv=str(quantize_2(spending_cv)),
         ),
-        health_score=HealthScoreSchema(value=health_score_val, confidence=confidence_val),
+        health_score=HealthScoreSchema(
+            value=health_score_val,
+            confidence=confidence_val,
+            confidence_score=str(quantize_2(confidence_score)),
+        ),
+        data_quality=DataQualitySchema(
+            observation_periods=observation_periods,
+            insufficient_history=insufficient_history,
+            uncategorized_transactions=len(txns) - categorized_count,
+        ),
     )
 
 

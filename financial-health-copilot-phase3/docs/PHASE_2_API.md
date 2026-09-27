@@ -14,7 +14,7 @@ Base URL: `/api/v1`. All endpoints require `Authorization: Bearer <JWT>`.
 ```json
 {
   "period": {
-    "start": "2026-08-27",
+    "start": "2026-08-28",
     "end": "2026-09-26"
   },
   "facts": {
@@ -22,23 +22,31 @@ Base URL: `/api/v1`. All endpoints require `Authorization: Bearer <JWT>`.
     "total_expenses": "48000.00",
     "savings": "12000.00",
     "savings_rate": "20.00",
-    "fixed_expenses": "27000.00",
-    "variable_expenses": "10010.00",
-    "discretionary_expenses": "10990.00",
+    "fixed_expenses": "25100.00",
+    "variable_expenses": "8510.00",
+    "discretionary_expenses": "14390.00",
     "monthly_burn": "48000.00",
     "cash_buffer_days": "5.6",
-    "emergency_fund_months": "5.6"
+    "emergency_fund_months": "0.2"
   },
   "ratios": {
-    "debt_to_income": "15.80",
-    "recurring_burden_pct": "46.70",
+    "debt_to_income": "15.83",
+    "recurring_burden_pct": "46.67",
     "credit_utilization": "22.00",
-    "debt_service_ratio": "15.80",
-    "expense_to_income": "80.00"
+    "debt_service_ratio": "15.83",
+    "expense_to_income": "80.00",
+    "income_cv": "0.00",
+    "spending_cv": "0.69"
   },
   "health_score": {
     "value": 71,
-    "confidence": "high"
+    "confidence": "high",
+    "confidence_score": "0.77"
+  },
+  "data_quality": {
+    "observation_periods": 3,
+    "insufficient_history": false,
+    "uncategorized_transactions": 0
   }
 }
 ```
@@ -99,8 +107,8 @@ Base URL: `/api/v1`. All endpoints require `Authorization: Bearer <JWT>`.
 ```json
 {
   "total_debt": "110000.00",
-  "dti": "15.80",
-  "debt_service_ratio": "15.80",
+  "dti": "15.83",
+  "debt_service_ratio": "15.83",
   "credit_utilization": "22.00",
   "loans": [
     {

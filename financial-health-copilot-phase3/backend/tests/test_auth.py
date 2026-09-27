@@ -97,7 +97,7 @@ def test_auth_throttling(client):
 
 
 def test_health_and_cors(client):
-    assert client.get("/health").json() == {"status": "ok", "phase": 2}
+    assert client.get("/health").json() == {"status": "ok", "phase": 3}
     ok = client.options(
         "/api/v1/auth/login",
         headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"},

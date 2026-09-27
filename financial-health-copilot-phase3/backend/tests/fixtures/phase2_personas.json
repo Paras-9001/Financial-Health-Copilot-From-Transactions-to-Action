@@ -1,0 +1,80 @@
+{
+  "ananya": {
+    "period": {"start": "2026-08-28", "end": "2026-09-26"},
+    "facts": {
+      "total_income": "60000.00",
+      "total_expenses": "48000.00",
+      "savings": "12000.00",
+      "savings_rate": "20.00",
+      "fixed_expenses": "25100.00",
+      "variable_expenses": "8510.00",
+      "discretionary_expenses": "14390.00",
+      "monthly_burn": "48000.00",
+      "cash_buffer_days": "5.6",
+      "emergency_fund_months": "0.2"
+    },
+    "ratios": {
+      "debt_to_income": "15.83",
+      "debt_service_ratio": "15.83",
+      "expense_to_income": "80.00",
+      "recurring_burden_pct": "46.67",
+      "credit_utilization": "22.00",
+      "income_cv": "0.00",
+      "spending_cv": "0.69"
+    },
+    "health_score": {"value": 71, "confidence": "high", "confidence_score": "0.77"},
+    "observation_periods": 3
+  },
+  "rohit": {
+    "period": {"start": "2026-08-20", "end": "2026-09-18"},
+    "facts": {
+      "total_income": "47000.00",
+      "total_expenses": "13800.00",
+      "savings": "33200.00",
+      "savings_rate": "70.64",
+      "fixed_expenses": "12000.00",
+      "variable_expenses": "0.00",
+      "discretionary_expenses": "1800.00",
+      "monthly_burn": "13800.00",
+      "cash_buffer_days": "39.1",
+      "emergency_fund_months": "1.3"
+    },
+    "ratios": {
+      "debt_to_income": "40.00",
+      "debt_service_ratio": "40.00",
+      "expense_to_income": "29.36",
+      "recurring_burden_pct": "25.53",
+      "credit_utilization": "90.67",
+      "income_cv": "0.45",
+      "spending_cv": "0.97"
+    },
+    "health_score": {"value": 78, "confidence": "high", "confidence_score": "0.75"},
+    "observation_periods": 5
+  },
+  "meera": {
+    "period": {"start": "2026-08-20", "end": "2026-09-18"},
+    "facts": {
+      "total_income": "140000.00",
+      "total_expenses": "44800.00",
+      "savings": "95200.00",
+      "savings_rate": "68.00",
+      "fixed_expenses": "28000.00",
+      "variable_expenses": "16800.00",
+      "discretionary_expenses": "0.00",
+      "monthly_burn": "44800.00",
+      "cash_buffer_days": "164.1",
+      "emergency_fund_months": "5.5"
+    },
+    "ratios": {
+      "debt_to_income": "0.00",
+      "debt_service_ratio": "0.00",
+      "expense_to_income": "32.00",
+      "recurring_burden_pct": "0.00",
+      "credit_utilization": "0.00",
+      "income_cv": "0.00",
+      "spending_cv": "0.00"
+    },
+    "health_score": {"value": 100, "confidence": "high", "confidence_score": "0.93"},
+    "observation_periods": 4
+  }
+}

@@ -1,11 +1,11 @@
-import math
+from collections import defaultdict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Sequence
 from uuid import UUID
 
 from app.core import config
-from app.db.models import Category, CreditCard, IncomeSource, Transaction
+from app.db.models import Category, CreditCard, IncomeSource, RecurringTransaction, Transaction
 
 TWO_PLACES = Decimal("0.01")
 ONE_PLACE = Decimal("0.1")
@@ -194,14 +194,13 @@ def calculate_coefficient_of_variation(values: Sequence[Decimal]) -> Decimal:
     """CV = stddev(values) / mean(values). Uses sample standard deviation."""
     if len(values) < 2:
         return Decimal("0.00")
-    float_vals = [float(v) for v in values]
-    mean_val = sum(float_vals) / len(float_vals)
-    if mean_val == 0.0:
+    mean_val = sum(values, Decimal("0.00")) / Decimal(len(values))
+    if mean_val == Decimal("0.00"):
         return Decimal("0.00")
-    variance = sum((x - mean_val) ** 2 for x in float_vals) / (len(float_vals) - 1)
-    stddev = math.sqrt(variance)
+    variance = sum(((value - mean_val) ** 2 for value in values), Decimal("0.00")) / Decimal(len(values) - 1)
+    stddev = variance.sqrt()
     cv = stddev / mean_val
-    return quantize_2(Decimal(str(cv)))
+    return quantize_2(cv)
 
 
 def calculate_income_volatility(monthly_incomes: Sequence[Decimal]) -> Decimal:
@@ -210,6 +209,71 @@ def calculate_income_volatility(monthly_incomes: Sequence[Decimal]) -> Decimal:
 
 def calculate_spending_volatility(monthly_discretionary_spends: Sequence[Decimal]) -> Decimal:
     return calculate_coefficient_of_variation(monthly_discretionary_spends)
+
+
+def calculate_monthly_history(
+    transactions: Sequence[Transaction],
+    category_map: dict[UUID, Category],
+    end_date: date,
+    max_periods: int = 6,
+) -> tuple[list[Decimal], list[Decimal]]:
+    """Return aligned monthly income and discretionary-spend series.
+
+    Months with transactions but no value for one of the metrics are represented
+    by zero. Empty months between the first and last observed month are also kept,
+    because skipping them would understate volatility for irregular earners.
+    """
+    if max_periods <= 0:
+        return [], []
+
+    eligible = [txn for txn in transactions if txn.txn_date <= end_date]
+    if not eligible:
+        return [], []
+
+    end_index = end_date.year * 12 + end_date.month - 1
+    first_txn = min(eligible, key=lambda txn: txn.txn_date).txn_date
+    first_index = first_txn.year * 12 + first_txn.month - 1
+    start_index = max(first_index, end_index - max_periods + 1)
+
+    income_by_month: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    discretionary_by_month: dict[int, Decimal] = defaultdict(lambda: Decimal("0.00"))
+    for txn in eligible:
+        month_index = txn.txn_date.year * 12 + txn.txn_date.month - 1
+        if month_index < start_index:
+            continue
+        category = category_map.get(txn.category_id) if txn.category_id else None
+        if txn.direction == "credit" and category and category.type == "income":
+            income_by_month[month_index] += txn.amount
+        elif txn.direction == "debit" and category and category.type == "discretionary":
+            discretionary_by_month[month_index] += txn.amount
+
+    month_indexes = range(start_index, end_index + 1)
+    return (
+        [quantize_2(income_by_month[index]) for index in month_indexes],
+        [quantize_2(discretionary_by_month[index]) for index in month_indexes],
+    )
+
+
+def calculate_monthly_recurring_obligations(
+    recurring_transactions: Sequence[RecurringTransaction],
+) -> Decimal:
+    """Normalize confirmed recurring obligations to a monthly amount."""
+    frequency_multipliers = {
+        "weekly": Decimal("52") / Decimal("12"),
+        "biweekly": Decimal("26") / Decimal("12"),
+        "monthly": Decimal("1"),
+        "quarterly": Decimal("1") / Decimal("3"),
+        "yearly": Decimal("1") / Decimal("12"),
+        "annual": Decimal("1") / Decimal("12"),
+    }
+    total = Decimal("0.00")
+    for recurring in recurring_transactions:
+        if recurring.status != "confirmed":
+            continue
+        multiplier = frequency_multipliers.get(recurring.frequency.lower())
+        if multiplier is not None:
+            total += recurring.expected_amount * multiplier
+    return quantize_2(total)
 
 
 def calculate_health_score(
@@ -291,14 +355,24 @@ def calculate_health_score(
     return int(round(weighted))
 
 
-def calculate_confidence(
+def calculate_confidence_score(
     data_completeness: Decimal = Decimal("1.0"),
     data_freshness: Decimal = Decimal("1.0"),
     historical_consistency: Decimal = Decimal("1.0"),
     forecast_uncertainty: Decimal = Decimal("0.8"),
     observation_count_periods: int = 3,
-) -> str:
-    """Formula from CONFIDENCE_AND_EXPLAINABILITY.md and CONFIGURATION.md."""
+) -> Decimal:
+    """Return the transparent 0-1 confidence score from the design spec."""
+    inputs = (
+        data_completeness,
+        data_freshness,
+        historical_consistency,
+        forecast_uncertainty,
+    )
+    if any(value < Decimal("0") or value > Decimal("1") for value in inputs):
+        raise ValueError("confidence inputs must be between 0 and 1")
+    if observation_count_periods < 0:
+        raise ValueError("observation_count_periods must not be negative")
     obs_score = min(
         Decimal("1.0"), Decimal(observation_count_periods) / Decimal(config.OBSERVATION_COUNT_CAP_PERIODS)
     )
@@ -308,6 +382,24 @@ def calculate_confidence(
         + config.WEIGHT_HISTORICAL_CONSISTENCY * historical_consistency
         + config.WEIGHT_FORECAST_UNCERTAINTY * forecast_uncertainty
         + config.WEIGHT_OBSERVATION_COUNT * obs_score
+    )
+    return score
+
+
+def calculate_confidence(
+    data_completeness: Decimal = Decimal("1.0"),
+    data_freshness: Decimal = Decimal("1.0"),
+    historical_consistency: Decimal = Decimal("1.0"),
+    forecast_uncertainty: Decimal = Decimal("0.8"),
+    observation_count_periods: int = 3,
+) -> str:
+    """Map the transparent confidence score to its documented label."""
+    score = calculate_confidence_score(
+        data_completeness=data_completeness,
+        data_freshness=data_freshness,
+        historical_consistency=historical_consistency,
+        forecast_uncertainty=forecast_uncertainty,
+        observation_count_periods=observation_count_periods,
     )
     if score >= config.CONFIDENCE_HIGH_MIN:
         return "high"
@@ -364,6 +456,8 @@ def calculate_loan_amortization(
     start_date: date,
 ) -> list[dict]:
     """Calculates loan amortization schedule for a given loan."""
+    if principal <= 0 or interest_rate < 0 or term_months <= 0 or monthly_installment <= 0:
+        raise ValueError("loan values must be positive and interest_rate must not be negative")
     schedule = []
     balance = principal
     monthly_rate = (interest_rate / Decimal("100")) / Decimal("12")

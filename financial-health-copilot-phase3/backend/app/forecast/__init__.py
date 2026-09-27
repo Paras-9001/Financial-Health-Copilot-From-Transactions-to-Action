@@ -1,1 +1,1 @@
-# Forecast module
+"""Deterministic cash-flow forecasting."""

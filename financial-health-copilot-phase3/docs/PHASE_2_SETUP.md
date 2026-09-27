@@ -21,7 +21,8 @@ docker compose exec backend ruff check .
 docker compose exec backend ruff format --check .
 ```
 
-All 47 tests pass.
+All 53 tests pass in the local/SQLite suite. Two PostgreSQL migration checks also run when
+`TEST_DATABASE_URL` is provided (the second command above does this inside Docker).
 
 ## Seed Personas and Inspect Financial Summaries
 
@@ -32,7 +33,7 @@ docker compose exec backend python scripts/seed_demo_data.py --persona all
 Open `http://localhost:8000/docs`, click **Authorize**, and paste the token from login.
 
 Call:
-1. `GET /api/v1/financial-summary` — returns facts, ratios, and composite health score (71 for Persona A).
+1. `GET /api/v1/financial-summary` — returns facts, ratios, volatility, data-quality metadata, and the composite health score (71 for Persona A).
 2. `GET /api/v1/spending/by-category` — returns spending grouped by category with percentages and types.
 3. `GET /api/v1/debt/summary` — returns debt totals, DTI, credit utilization, and loans/cards breakdown.
 4. `GET /api/v1/debt/loans/{id}/amortization` — returns month-by-month principal and interest amortization schedule.

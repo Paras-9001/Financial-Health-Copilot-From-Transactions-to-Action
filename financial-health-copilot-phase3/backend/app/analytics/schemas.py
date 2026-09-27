@@ -28,11 +28,20 @@ class RatiosSchema(BaseModel):
     credit_utilization: str
     debt_service_ratio: str | None = None
     expense_to_income: str | None = None
+    income_cv: str
+    spending_cv: str
 
 
 class HealthScoreSchema(BaseModel):
     value: int
     confidence: str
+    confidence_score: str
+
+
+class DataQualitySchema(BaseModel):
+    observation_periods: int
+    insufficient_history: bool
+    uncategorized_transactions: int
 
 
 class FinancialSummaryResponse(BaseModel):
@@ -40,6 +49,7 @@ class FinancialSummaryResponse(BaseModel):
     facts: FactsSchema
     ratios: RatiosSchema
     health_score: HealthScoreSchema
+    data_quality: DataQualitySchema
 
 
 class CategorySpendingItem(BaseModel):

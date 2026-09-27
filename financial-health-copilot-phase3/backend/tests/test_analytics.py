@@ -1,11 +1,18 @@
+import json
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.analytics.service import (
     calculate_cash_buffer_days,
     calculate_coefficient_of_variation,
     calculate_confidence,
+    calculate_confidence_score,
     calculate_credit_utilization,
     calculate_debt_service_ratio,
     calculate_debt_to_income,
@@ -17,6 +24,8 @@ from app.analytics.service import (
     calculate_income_volatility,
     calculate_loan_amortization,
     calculate_monthly_burn,
+    calculate_monthly_history,
+    calculate_monthly_recurring_obligations,
     calculate_recurring_burden_pct,
     calculate_savings,
     calculate_savings_rate,
@@ -26,7 +35,18 @@ from app.analytics.service import (
     calculate_total_income,
     calculate_variable_expenses,
 )
-from app.db.models import Category, CreditCard, IncomeSource, Transaction
+from app.db.models import (
+    Category,
+    CreditCard,
+    FinancialSnapshot,
+    IncomeSource,
+    RecurringTransaction,
+    Transaction,
+)
+
+PERSONA_FIXTURES = json.loads(
+    (Path(__file__).parent / "fixtures" / "phase2_personas.json").read_text(encoding="utf-8")
+)
 
 # =============================================================================
 # Unit Tests for Pure Financial Analytics Functions
@@ -221,6 +241,62 @@ def test_volatility_coefficient_of_variation():
     assert calculate_spending_volatility([]) == Decimal("0.00")
 
 
+def test_monthly_history_keeps_zero_months():
+    income = Category(id=uuid4(), name="Income", type="income")
+    dining = Category(id=uuid4(), name="Dining", type="discretionary")
+    account_id = uuid4()
+    txns = [
+        Transaction(
+            account_id=account_id,
+            txn_date=date(2026, 1, 5),
+            amount=Decimal("100.00"),
+            direction="credit",
+            category_id=income.id,
+            raw_description="Income",
+            dedup_hash="jan-income",
+        ),
+        Transaction(
+            account_id=account_id,
+            txn_date=date(2026, 3, 5),
+            amount=Decimal("30.00"),
+            direction="debit",
+            category_id=dining.id,
+            raw_description="Dining",
+            dedup_hash="mar-dining",
+        ),
+    ]
+    incomes, spending = calculate_monthly_history(
+        txns, {income.id: income, dining.id: dining}, date(2026, 3, 31)
+    )
+    assert incomes == [Decimal("100.00"), Decimal("0.00"), Decimal("0.00")]
+    assert spending == [Decimal("0.00"), Decimal("0.00"), Decimal("30.00")]
+
+
+def test_recurring_obligations_are_monthly_normalized():
+    user_id = uuid4()
+    recurring = [
+        RecurringTransaction(
+            user_id=user_id,
+            expected_amount=Decimal("1200.00"),
+            frequency="yearly",
+            status="confirmed",
+        ),
+        RecurringTransaction(
+            user_id=user_id,
+            expected_amount=Decimal("100.00"),
+            frequency="weekly",
+            status="confirmed",
+        ),
+        RecurringTransaction(
+            user_id=user_id,
+            expected_amount=Decimal("999.00"),
+            frequency="monthly",
+            status="candidate",
+        ),
+    ]
+    assert calculate_monthly_recurring_obligations(recurring) == Decimal("533.33")
+
+
 def test_health_score_ananya():
     # Ananya's exact parameters:
     # savings_rate = 20.00%
@@ -260,6 +336,11 @@ def test_confidence_calculation():
     )
     assert conf_degraded == "low"
 
+    score = calculate_confidence_score(observation_count_periods=6)
+    assert score == Decimal("0.96")
+    with pytest.raises(ValueError):
+        calculate_confidence_score(data_completeness=Decimal("1.01"))
+
 
 def test_loan_amortization():
     schedule = calculate_loan_amortization(
@@ -270,11 +351,21 @@ def test_loan_amortization():
         start_date=date(2026, 1, 1),
     )
     assert len(schedule) == 3
+    assert schedule[0]["date"] == "2026-02-01"
     # Check that final balance is 0.00
     assert schedule[-1]["remaining_balance"] == "0.00"
     for item in schedule:
         assert Decimal(item["principal_component"]) > 0
         assert Decimal(item["interest_component"]) >= 0
+
+    with pytest.raises(ValueError):
+        calculate_loan_amortization(
+            principal=Decimal("0"),
+            interest_rate=Decimal("12"),
+            term_months=3,
+            monthly_installment=Decimal("100"),
+            start_date=date(2026, 1, 1),
+        )
 
 
 def test_spending_by_category():
@@ -347,31 +438,49 @@ def test_financial_summary_no_data(client):
     assert data["error"]["code"] == "no_data"
 
 
-def test_persona_a_financial_summary(client):
-    # Seed Persona A
-    headers = auth(client, "ananya.test@example.com")
-    seed_res = client.post("/api/v1/onboarding/demo", json={"persona": "ananya"}, headers=headers)
+@pytest.mark.parametrize("persona", ["ananya", "rohit", "meera"])
+def test_persona_financial_summary_matches_hand_computed_fixture(client, persona):
+    headers = auth(client, f"{persona}.fixture@example.com")
+    seed_res = client.post("/api/v1/onboarding/demo", json={"persona": persona}, headers=headers)
     assert seed_res.status_code == 201
 
-    # Request financial summary
     res = client.get("/api/v1/financial-summary", headers=headers)
     assert res.status_code == 200
     data = res.json()
+    expected = PERSONA_FIXTURES[persona]
 
-    facts = data["facts"]
-    assert facts["total_income"] == "60000.00"
-    assert facts["total_expenses"] == "48000.00"
-    assert facts["savings"] == "12000.00"
-    assert facts["savings_rate"] == "20.00"
+    assert data["period"] == expected["period"]
+    assert data["facts"] == expected["facts"]
+    assert data["ratios"] == expected["ratios"]
+    assert data["health_score"] == expected["health_score"]
+    assert data["data_quality"] == {
+        "observation_periods": expected["observation_periods"],
+        "insufficient_history": False,
+        "uncategorized_transactions": 0,
+    }
 
-    ratios = data["ratios"]
-    assert ratios["debt_to_income"] in ("15.80", "15.83")
-    assert ratios["credit_utilization"] == "22.00"
-    assert ratios["recurring_burden_pct"] in ("46.67", "46.70")
 
-    health = data["health_score"]
-    assert health["value"] == 71
-    assert health["confidence"] == "high"
+def test_financial_summary_persists_snapshot(client, db_engine):
+    headers = auth(client, "snapshot.test@example.com")
+    client.post("/api/v1/onboarding/demo", json={"persona": "ananya"}, headers=headers)
+    assert client.get("/api/v1/financial-summary", headers=headers).status_code == 200
+    with Session(db_engine) as db:
+        assert db.scalar(select(func.count()).select_from(FinancialSnapshot)) == 1
+
+
+def test_financial_summary_marks_short_history_as_low_confidence(client):
+    headers = auth(client, "short-history.test@example.com")
+    client.post("/api/v1/onboarding/demo", json={"persona": "ananya"}, headers=headers)
+    response = client.get(
+        "/api/v1/financial-summary?start_date=2026-07-01&end_date=2026-07-31",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["data_quality"]["observation_periods"] == 1
+    assert data["data_quality"]["insufficient_history"] is True
+    assert data["health_score"]["confidence"] == "low"
+    assert Decimal(data["health_score"]["confidence_score"]) < Decimal("0.40")
 
 
 def test_spending_by_category_api(client):

@@ -14,18 +14,19 @@ from app.core.database import get_db
 from app.core.errors import install_error_handlers
 from app.credit_cards.router import router as credit_cards_router
 from app.csv_import.router import router as csv_import_router
+from app.forecast.router import router as forecast_router
 from app.income_sources.router import router as income_sources_router
 from app.loans.router import router as loans_router
 from app.onboarding.router import router as onboarding_router
+from app.recurring.router import router as recurring_router
 from app.transactions.router import router as transactions_router
 from app.users.router import router as users_router
-from app.forecast.router import router as forecast_router
 
 settings = config.get_settings()
 app = FastAPI(
     title="Financial Health Copilot",
-    version="0.3.0",
-    description="Phase 2: financial analytics engine and summary APIs.",
+    version="0.4.0",
+    description="Phase 3: deterministic recurring detection and cash-flow forecasting.",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +47,7 @@ app.include_router(income_sources_router, prefix=config.API_PREFIX)
 app.include_router(csv_import_router, prefix=config.API_PREFIX)
 app.include_router(onboarding_router, prefix=config.API_PREFIX)
 app.include_router(analytics_router, prefix=config.API_PREFIX)
+app.include_router(recurring_router, prefix=config.API_PREFIX)
 app.include_router(forecast_router, prefix=config.API_PREFIX)
 
 

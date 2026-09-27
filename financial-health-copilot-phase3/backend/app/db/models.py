@@ -3,6 +3,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -207,6 +208,24 @@ class FinancialSnapshot(Base):
     health_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
     metric_period_start: Mapped[date | None] = mapped_column(Date)
     metric_period_end: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CashFlowForecast(Base):
+    __tablename__ = "cash_flow_forecasts"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    daily_projection: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    method: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

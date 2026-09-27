@@ -122,7 +122,8 @@ All endpoints below are **public** (called by the frontend). There are no intern
 
 ### `GET /cash-flow/forecast`
 - **Query params:** `horizon_days?` (default 30, max 90)
-- **Response 200:** `{ "daily_projection": [ { "date", "projected_balance", "lower_bound", "upper_bound" } ], "confidence": "medium", "method": "rolling_average_v1" }`
+- **Response 200:** `{ "as_of_date", "horizon_days", "daily_projection": [ { "date", "projected_balance", "lower_bound", "upper_bound", "scheduled_inflow", "scheduled_outflow", "unscheduled_spend" } ], "confidence", "method": "rolling_average_v1", "history_days", "spending_cv", "recurring_coverage_pct", "assumptions": [...] }`
+- **Errors:** `404 no_data`, `422 validation_error` for a horizon outside 1–90 days.
 
 ---
 

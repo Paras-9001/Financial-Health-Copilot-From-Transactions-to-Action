@@ -25,27 +25,32 @@
   - `GET /api/v1/debt/loans/{id}/amortization` returning month-by-month amortization schedule (returns `404 loan_not_found` for missing loans).
 - **Audit Persistence:**
   - `FinancialSnapshot` ORM model added to `app.db.models` mapped to the existing `financial_snapshots` table from migration `0001_initial`.
-  - Every calculation of `/financial-summary` stores a snapshot record.
+  - Every successful calculation of `/financial-summary` commits a snapshot record.
 - **Fixture Verification:**
   - Verified Persona A (Ananya):
     - Total Income: ₹60,000.00
     - Total Expenses: ₹48,000.00
     - Savings: ₹12,000.00
     - Savings Rate: 20.00%
-    - DTI: 15.80%
-    - Recurring Burden: 46.70%
+    - DTI: 15.83%
+    - Recurring Burden: 46.67%
     - Credit Utilization: 22.00%
     - Cash Buffer: 5.6 days
     - Health Score: 71 (High confidence)
-    Matches `API_SPECIFICATION.md` and `SAMPLE_DATA.md` with 100% precision.
+  Matches the committed hand-computed fixture with 100% precision.
+- Verified Personas B and C against the same committed fixture, including income and spending CV.
+- Corrected the trailing window to 30 inclusive calendar days and exposed explicit
+  `insufficient_history` metadata for short histories.
 
 ## Automated Verification
 
 - Ruff lint: pass (`ruff check .` clean).
 - Ruff formatting: pass (`ruff format --check .` clean).
-- Backend tests: 47 passed, 2 skipped (Postgres-gated integration checks).
-- Unit tests for pure analytics: 13 passed with 100% formula coverage.
-- API tests for analytics endpoints: 8 passed covering normal responses, 404 no_data, 404 no_debt_data, 404 loan_not_found, and 422 date validation errors.
+- Backend tests: 53 passed, 2 skipped (Postgres-gated integration checks).
+- The three-persona API test loads `tests/fixtures/phase2_personas.json` and compares every
+  Phase 2 summary fact, ratio, score, period, and data-quality field exactly.
+- API coverage includes normal responses, snapshot persistence, `404 no_data`,
+  `404 no_debt_data`, `404 loan_not_found`, and `422 validation_error`.
 
 ## Phase Boundary
 

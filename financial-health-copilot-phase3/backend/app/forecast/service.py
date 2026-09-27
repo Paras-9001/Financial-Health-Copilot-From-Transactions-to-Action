@@ -1,150 +1,309 @@
+import calendar
+from dataclasses import dataclass
 from datetime import date, timedelta
-from decimal import Decimal
-import math
-from typing import List
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Literal, Sequence
+from uuid import UUID
 
-from app.db.models import Account, Transaction, RecurringTransaction, IncomeSource, Loan
-from app.forecast.schemas import ForecastResponse, DailyProjection
+from app.core import config
+from app.db.models import (
+    Account,
+    Category,
+    IncomeSource,
+    Loan,
+    RecurringTransaction,
+    Transaction,
+)
 
-def quantize_2(val: Decimal) -> Decimal:
-    if val is None:
-        return Decimal("0.00")
-    return val.quantize(Decimal("0.01"))
+TWO_PLACES = Decimal("0.01")
+ZERO = Decimal("0.00")
+
+
+@dataclass(frozen=True)
+class ProjectionPoint:
+    date: date
+    projected_balance: Decimal
+    lower_bound: Decimal
+    upper_bound: Decimal
+    scheduled_inflow: Decimal
+    scheduled_outflow: Decimal
+    unscheduled_spend: Decimal
+
+
+@dataclass(frozen=True)
+class ForecastResult:
+    as_of_date: date
+    horizon_days: int
+    daily_projection: list[ProjectionPoint]
+    confidence: Literal["high", "medium", "low"]
+    history_days: int
+    spending_cv: Decimal
+    recurring_coverage_pct: Decimal
+    rolling_average_daily_spend: Decimal
+    trend_factor: Decimal
+
+
+def quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+
+def add_calendar_months(value: date, months: int = 1) -> date:
+    """Advance by calendar months while retaining the day where possible."""
+    month_index = value.year * 12 + value.month - 1 + months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def add_calendar_years(value: date, years: int = 1) -> date:
+    day = min(value.day, calendar.monthrange(value.year + years, value.month)[1])
+    return date(value.year + years, value.month, day)
+
+
+def advance_occurrence(value: date, frequency: str) -> date | None:
+    normalized = frequency.lower()
+    if normalized == "weekly":
+        return value + timedelta(days=7)
+    if normalized == "biweekly":
+        return value + timedelta(days=14)
+    if normalized == "monthly":
+        return add_calendar_months(value)
+    if normalized == "quarterly":
+        return add_calendar_months(value, 3)
+    if normalized in ("yearly", "annual"):
+        return add_calendar_years(value)
+    return None
+
+
+def next_occurrence(value: date | None, frequency: str, after: date) -> date | None:
+    if value is None:
+        return None
+    occurrence = value
+    while occurrence <= after:
+        advanced = advance_occurrence(occurrence, frequency)
+        if advanced is None or advanced <= occurrence:
+            return None
+        occurrence = advanced
+    return occurrence
+
+
+def coefficient_of_variation(values: Sequence[Decimal]) -> Decimal:
+    if len(values) < 2:
+        return ZERO
+    mean = sum(values, ZERO) / Decimal(len(values))
+    if mean <= ZERO:
+        return ZERO
+    variance = sum(((value - mean) ** 2 for value in values), ZERO) / Decimal(len(values) - 1)
+    return variance.sqrt() / mean
+
+
+def classify_forecast_confidence(
+    history_days: int,
+    spending_cv: Decimal,
+    recurring_coverage_pct: Decimal,
+) -> Literal["high", "medium", "low"]:
+    """Apply the confidence bands from FORECASTING_AND_RISK.md."""
+    if (
+        history_days >= config.FORECAST_CONFIDENCE_HIGH_MIN_MONTHS_HISTORY * 30
+        and spending_cv < config.FORECAST_CONFIDENCE_HIGH_MAX_SPENDING_CV
+        and recurring_coverage_pct >= config.FORECAST_CONFIDENCE_HIGH_MIN_RECURRING_COVERAGE_PCT
+    ):
+        return "high"
+    if (
+        history_days < 30
+        or spending_cv > config.FORECAST_CONFIDENCE_MEDIUM_MAX_SPENDING_CV
+        or recurring_coverage_pct < Decimal("50")
+    ):
+        return "low"
+    return "medium"
+
+
+def _full_period_totals(
+    transactions: Sequence[Transaction],
+    category_map: dict[UUID, Category],
+    as_of_date: date,
+    history_days: int,
+) -> list[Decimal]:
+    period_count = min(3, history_days // 30)
+    newest_first: list[Decimal] = []
+    for offset in range(period_count):
+        period_end = as_of_date - timedelta(days=offset * 30)
+        period_start = period_end - timedelta(days=29)
+        total = sum(
+            (
+                txn.amount
+                for txn in transactions
+                if period_start <= txn.txn_date <= period_end
+                and txn.direction == "debit"
+                and txn.recurring_id is None
+                and txn.category_id in category_map
+                and category_map[txn.category_id].type in ("variable", "discretionary")
+            ),
+            ZERO,
+        )
+        newest_first.append(total)
+    return list(reversed(newest_first))
+
+
+def _trend_factor(period_totals: Sequence[Decimal]) -> Decimal:
+    if len(period_totals) < 3:
+        return Decimal("1.00")
+    previous_average = (period_totals[0] + period_totals[1]) / Decimal("2")
+    if previous_average <= ZERO:
+        return Decimal("1.00")
+    raw_factor = period_totals[2] / previous_average
+    cap = config.FORECAST_TREND_CAP_PCT / Decimal("100")
+    return min(Decimal("1") + cap, max(Decimal("1") - cap, raw_factor))
+
+
+def _monthly_obligation(recurring: RecurringTransaction) -> Decimal:
+    multipliers = {
+        "weekly": Decimal("52") / Decimal("12"),
+        "biweekly": Decimal("26") / Decimal("12"),
+        "monthly": Decimal("1"),
+        "quarterly": Decimal("1") / Decimal("3"),
+        "yearly": Decimal("1") / Decimal("12"),
+        "annual": Decimal("1") / Decimal("12"),
+    }
+    return recurring.expected_amount * multipliers.get(recurring.frequency.lower(), ZERO)
+
+
+def _recurring_coverage(
+    transactions: Sequence[Transaction],
+    category_map: dict[UUID, Category],
+    recurring: Sequence[RecurringTransaction],
+    loans: Sequence[Loan],
+    history_days: int,
+) -> Decimal:
+    total_expenses = sum(
+        (
+            txn.amount
+            for txn in transactions
+            if txn.direction == "debit"
+            and not (txn.category_id in category_map and category_map[txn.category_id].type == "transfer")
+        ),
+        ZERO,
+    )
+    if total_expenses <= ZERO:
+        return ZERO
+    monthly_scheduled = sum(
+        (_monthly_obligation(item) for item in recurring if item.status == "confirmed"), ZERO
+    ) + sum((loan.monthly_installment for loan in loans), ZERO)
+    scheduled_for_window = monthly_scheduled * Decimal(history_days) / Decimal("30")
+    return min(Decimal("100"), scheduled_for_window / total_expenses * Decimal("100"))
+
+
+def _scheduled_flows(
+    as_of_date: date,
+    horizon_days: int,
+    recurring: Sequence[RecurringTransaction],
+    income_sources: Sequence[IncomeSource],
+    loans: Sequence[Loan],
+) -> tuple[dict[date, Decimal], dict[date, Decimal]]:
+    inflows: dict[date, Decimal] = {}
+    outflows: dict[date, Decimal] = {}
+    horizon_end = as_of_date + timedelta(days=horizon_days)
+
+    def add(target: dict[date, Decimal], occurrence: date, amount: Decimal) -> None:
+        target[occurrence] = target.get(occurrence, ZERO) + amount
+
+    for item in recurring:
+        if item.status != "confirmed":
+            continue
+        occurrence = next_occurrence(item.next_expected_date, item.frequency, as_of_date)
+        while occurrence is not None and occurrence <= horizon_end:
+            add(outflows, occurrence, item.expected_amount)
+            occurrence = advance_occurrence(occurrence, item.frequency)
+
+    for source in income_sources:
+        occurrence = next_occurrence(source.last_received_date, source.frequency, as_of_date)
+        while occurrence is not None and occurrence <= horizon_end:
+            add(inflows, occurrence, source.amount)
+            occurrence = advance_occurrence(occurrence, source.frequency)
+
+    for loan in loans:
+        occurrence = next_occurrence(loan.start_date, "monthly", as_of_date)
+        while occurrence is not None and occurrence <= horizon_end:
+            add(outflows, occurrence, loan.monthly_installment)
+            occurrence = add_calendar_months(occurrence)
+
+    return inflows, outflows
+
 
 def generate_forecast(
-    accounts: List[Account],
-    txns: List[Transaction],
-    recurring: List[RecurringTransaction],
-    income_sources: List[IncomeSource],
-    cat_map: dict,
-    loans: List[Loan],
-    horizon_days: int = 30
-) -> ForecastResponse:
-    # 1. Starting balance
-    current_balance = sum((a.balance for a in accounts if a.type in ("checking", "savings")), Decimal("0.00"))
-    
-    # 2. Historical unscheduled spend (trailing 90 days)
-    today = date.today()
-    if txns:
-        last_txn_date = max(t.txn_date for t in txns)
-        today = last_txn_date
-        
-    start_history = today - timedelta(days=90)
-    historical_txns = [t for t in txns if start_history <= t.txn_date <= today]
-    
-    # Filter to discretionary and variable
-    unscheduled_txns = []
-    for t in historical_txns:
-        if t.direction == "debit" and t.category_id in cat_map:
-            cat = cat_map[t.category_id]
-            if cat.type in ("variable", "discretionary"):
-                unscheduled_txns.append(t)
-                
-    # Calculate rolling average daily unscheduled spend
-    history_days = max(1, (today - start_history).days)
-    total_unscheduled = sum(t.amount for t in unscheduled_txns)
-    rolling_avg_daily = total_unscheduled / Decimal(history_days)
-    
-    # Trend adjustment
-    last_30_start = today - timedelta(days=30)
-    prev_30_start = today - timedelta(days=60)
-    
-    recent_total = sum(t.amount for t in unscheduled_txns if t.txn_date > last_30_start)
-    prev_total = sum(t.amount for t in unscheduled_txns if prev_30_start < t.txn_date <= last_30_start)
-    
-    trend_factor = Decimal("1.0")
-    if prev_total > 0:
-        ratio = recent_total / prev_total
-        ratio = min(Decimal("1.15"), max(Decimal("0.85"), ratio))
-        trend_factor = ratio
-        
-    adjusted_daily_spend = rolling_avg_daily * trend_factor
-    
-    # Confidence score calculation
-    monthly_totals = []
-    for i in range(3):
-        m_start = today - timedelta(days=30 * (i + 1))
-        m_end = today - timedelta(days=30 * i)
-        m_total = sum(t.amount for t in unscheduled_txns if m_start < t.txn_date <= m_end)
-        monthly_totals.append(m_total)
-        
-    if len(monthly_totals) >= 2 and history_days >= 60:
-        mean_spend = sum(monthly_totals) / Decimal(len(monthly_totals))
-        if mean_spend > 0:
-            variance = sum((m - mean_spend)**2 for m in monthly_totals) / Decimal(len(monthly_totals))
-            stddev = Decimal(math.sqrt(float(variance)))
-            spending_cv = stddev / mean_spend
-        else:
-            spending_cv = Decimal("0.0")
-    else:
-        spending_cv = Decimal("0.4")
-        
-    if history_days >= 90 and spending_cv < Decimal("0.15"):
-        confidence = "high"
-    elif history_days >= 30 and spending_cv <= Decimal("0.35"):
-        confidence = "medium"
-    else:
-        confidence = "low"
-        
-    daily_projection = []
-    current_proj = current_balance
-    
-    for day_idx in range(1, horizon_days + 1):
-        proj_date = today + timedelta(days=day_idx)
-        flows = Decimal("0.0")
-        
-        for r in recurring:
-            if r.status == "confirmed":
-                curr_date = r.next_expected_date
-                while curr_date and curr_date <= proj_date:
-                    if curr_date == proj_date:
-                        flows -= r.expected_amount
-                    if r.frequency == "monthly":
-                        curr_date += timedelta(days=30)
-                    elif r.frequency == "weekly":
-                        curr_date += timedelta(days=7)
-                    else:
-                        break
-                        
-        for inc in income_sources:
-            curr_date = inc.last_received_date
-            if not curr_date:
-                curr_date = today
-            while curr_date <= proj_date:
-                if inc.frequency == "monthly":
-                    curr_date += timedelta(days=30)
-                elif inc.frequency == "biweekly":
-                    curr_date += timedelta(days=14)
-                elif inc.frequency == "weekly":
-                    curr_date += timedelta(days=7)
-                else:
-                    break
-                if curr_date == proj_date:
-                    flows += inc.amount
-                    
-        for loan in loans:
-            curr_date = loan.start_date
-            while curr_date <= proj_date:
-                curr_date += timedelta(days=30)
-                if curr_date == proj_date:
-                    flows -= loan.monthly_installment
-        
-        if flows == Decimal("0.0"):
-            current_proj -= adjusted_daily_spend
-        else:
-            current_proj += flows
-            
-        bound_width = spending_cv * rolling_avg_daily * Decimal(math.sqrt(day_idx))
-        
-        daily_projection.append(DailyProjection(
-            date=proj_date,
-            projected_balance=str(quantize_2(current_proj)),
-            lower_bound=str(quantize_2(current_proj - bound_width)),
-            upper_bound=str(quantize_2(current_proj + bound_width))
-        ))
-        
-    return ForecastResponse(
-        daily_projection=daily_projection,
+    accounts: Sequence[Account],
+    transactions: Sequence[Transaction],
+    recurring: Sequence[RecurringTransaction],
+    income_sources: Sequence[IncomeSource],
+    category_map: dict[UUID, Category],
+    loans: Sequence[Loan],
+    horizon_days: int = config.FORECAST_HORIZON_DEFAULT_DAYS,
+) -> ForecastResult:
+    if not 1 <= horizon_days <= config.FORECAST_HORIZON_MAX_DAYS:
+        raise ValueError("horizon_days is outside the supported range")
+    if not transactions:
+        raise ValueError("transactions are required to generate a forecast")
+
+    as_of_date = max(txn.txn_date for txn in transactions)
+    first_date = min(txn.txn_date for txn in transactions)
+    available_history_days = (as_of_date - first_date).days + 1
+    history_days = min(90, available_history_days)
+    history_start = as_of_date - timedelta(days=history_days - 1)
+    history_transactions = [txn for txn in transactions if history_start <= txn.txn_date <= as_of_date]
+
+    unscheduled_transactions = [
+        txn
+        for txn in history_transactions
+        if txn.direction == "debit"
+        and txn.recurring_id is None
+        and txn.category_id in category_map
+        and category_map[txn.category_id].type in ("variable", "discretionary")
+    ]
+    unscheduled_total = sum((txn.amount for txn in unscheduled_transactions), ZERO)
+    rolling_average_daily = unscheduled_total / Decimal(history_days)
+
+    period_totals = _full_period_totals(history_transactions, category_map, as_of_date, history_days)
+    spending_cv = coefficient_of_variation(period_totals)
+    trend_factor = _trend_factor(period_totals)
+    adjusted_daily_spend = rolling_average_daily * trend_factor
+    recurring_coverage_pct = _recurring_coverage(
+        history_transactions, category_map, recurring, loans, history_days
+    )
+    confidence = classify_forecast_confidence(history_days, spending_cv, recurring_coverage_pct)
+
+    inflows, outflows = _scheduled_flows(as_of_date, horizon_days, recurring, income_sources, loans)
+    balance = sum(
+        (account.balance for account in accounts if account.type in ("checking", "savings")),
+        ZERO,
+    )
+    projections: list[ProjectionPoint] = []
+    for day_number in range(1, horizon_days + 1):
+        projection_date = as_of_date + timedelta(days=day_number)
+        scheduled_inflow = inflows.get(projection_date, ZERO)
+        scheduled_outflow = outflows.get(projection_date, ZERO)
+        balance += scheduled_inflow - scheduled_outflow - adjusted_daily_spend
+        bound_width = spending_cv * rolling_average_daily * Decimal(day_number).sqrt()
+        projections.append(
+            ProjectionPoint(
+                date=projection_date,
+                projected_balance=quantize_money(balance),
+                lower_bound=quantize_money(balance - bound_width),
+                upper_bound=quantize_money(balance + bound_width),
+                scheduled_inflow=quantize_money(scheduled_inflow),
+                scheduled_outflow=quantize_money(scheduled_outflow),
+                unscheduled_spend=quantize_money(adjusted_daily_spend),
+            )
+        )
+
+    return ForecastResult(
+        as_of_date=as_of_date,
+        horizon_days=horizon_days,
+        daily_projection=projections,
         confidence=confidence,
-        method="rolling_average_v1"
+        history_days=history_days,
+        spending_cv=spending_cv.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        recurring_coverage_pct=recurring_coverage_pct.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        rolling_average_daily_spend=quantize_money(rolling_average_daily),
+        trend_factor=trend_factor.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
     )

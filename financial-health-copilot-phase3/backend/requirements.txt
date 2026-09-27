@@ -1,4 +1,4 @@
-# Pinned runtime and transitive dependencies verified for Phase 1.
+# Pinned runtime and transitive dependencies verified through Phase 3.
 alembic==1.20.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
