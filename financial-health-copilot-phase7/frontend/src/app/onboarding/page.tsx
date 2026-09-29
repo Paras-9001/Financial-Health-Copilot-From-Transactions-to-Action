@@ -1,0 +1,91 @@
+"use client";
+
+import { Suspense, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AppShell, PageHeader } from "@/components/app-shell";
+import { InlineError } from "@/components/states";
+import { useAuth } from "@/components/auth-provider";
+import { useRecalculation } from "@/components/recalculation-provider";
+import { api } from "@/lib/api";
+import type { Account } from "@/lib/types";
+
+type Mode = "choose" | "demo" | "csv" | "manual";
+type Preview = { preview_id: string; headers: string[]; detected_mapping: Record<string, string>; rows: Array<{ source: Record<string, unknown>; errors?: unknown[] }>; total_rows: number; valid_rows: number; invalid_rows: number };
+
+function OnboardingWorkspace() {
+  const { token } = useAuth();
+  const { captureSnapshot, completeRecalculation } = useRecalculation();
+  const router = useRouter();
+  const search = useSearchParams();
+  const client = useQueryClient();
+  const requested = search.get("mode");
+  const [mode, setMode] = useState<Mode>(requested === "manual" ? "manual" : "choose");
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [notice, setNotice] = useState("");
+  const personas = useQuery({ queryKey: ["personas"], queryFn: () => api<Array<{ key: string; name: string; description: string }>>("/onboarding/personas", {}, token!), enabled: Boolean(token) });
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<{ accounts: Account[] }>("/accounts", {}, token!), enabled: Boolean(token) });
+  const refresh = async () => { await client.invalidateQueries(); await accounts.refetch(); };
+  const seed = useMutation({ mutationFn: (persona: string) => api("/onboarding/demo", { method: "POST", body: JSON.stringify({ persona }) }, token!), onSuccess: async () => { await refresh(); router.replace("/"); } });
+  const upload = useMutation({ mutationFn: (file: File) => { const body = new FormData(); body.append("file", file); return api<Preview>("/imports/csv/preview", { method: "POST", body }, token!); }, onSuccess: setPreview });
+  const confirm = useMutation({
+    mutationFn: async () => {
+      const before = await captureSnapshot();
+      const result = await api<{ imported: number; duplicates_skipped: number; rejected: unknown[]; recalculation_triggered: boolean }>("/imports/csv/confirm", { method: "POST", body: JSON.stringify({ preview_id: preview?.preview_id }) }, token!);
+      return { before, result };
+    },
+    onSuccess: async ({ before, result }) => {
+      await refresh();
+      setNotice(`${result.imported} imported · ${result.duplicates_skipped} duplicates skipped`);
+      if (result.recalculation_triggered) {
+        await completeRecalculation(before, {
+          label: "Import complete and analysis recalculated",
+          detail: `${result.imported} new transaction${result.imported === 1 ? "" : "s"} are now reflected throughout the app.`,
+        });
+      }
+      setTimeout(() => router.replace("/"), 900);
+    },
+  });
+  const create = useMutation({
+    mutationFn: async ({ path, body }: { path: string; body: unknown }) => {
+      const before = path === "/transactions" ? await captureSnapshot() : null;
+      const result = await api<{ recalculation_triggered?: boolean }>(path, { method: "POST", body: JSON.stringify(body) }, token!);
+      return { before, path, result };
+    },
+    onSuccess: async ({ before, path, result }) => {
+      setNotice("Saved. You can add another item or open the dashboard.");
+      await refresh();
+      if (path === "/transactions" && before && result.recalculation_triggered) {
+        await completeRecalculation(before, {
+          label: "Transaction saved and analysis recalculated",
+        });
+      }
+    },
+  });
+  const submitJson = (path: string, event: FormEvent<HTMLFormElement>, transform?: (data: Record<string, FormDataEntryValue>) => unknown) => { event.preventDefault(); const form = event.currentTarget; const values = Object.fromEntries(new FormData(form).entries()); create.mutate({ path, body: transform ? transform(values) : values }); form.reset(); };
+  return <AppShell><main className="dashboard page-stack onboarding"><PageHeader eyebrow="FIRST-RUN SETUP" title="Build your financial picture" description="Choose the path that fits. Sample data is fastest; CSV and manual entry use the same ingestion pipeline." />
+    {mode === "choose" && <div className="onboarding-choices"><button className="choice-card recommended" onClick={() => setMode("demo")}><span>RECOMMENDED</span><b>Explore with sample data</b><p>Pick a realistic persona and open a fully populated dashboard in one step.</p><strong>Choose sample data →</strong></button><button className="choice-card" onClick={() => setMode("csv")}><span>IMPORT</span><b>Upload a CSV</b><p>Preview, validate, and confirm transaction rows before anything is saved.</p><strong>Import transactions →</strong></button><button className="choice-card" onClick={() => setMode("manual")}><span>MANUAL</span><b>Add accounts manually</b><p>Enter accounts, income, debt, cards, and a few transactions yourself.</p><strong>Enter details →</strong></button></div>}
+    {mode !== "choose" && <button className="text-button back-button" onClick={() => setMode("choose")}>← Choose another setup path</button>}
+    {mode === "demo" && <section className="surface-card"><div className="section-heading"><div><p className="section-kicker">SAMPLE PERSONAS</p><h2>Pick a starting scenario</h2></div></div><div className="three-column">{personas.data?.map((persona) => <article className="persona-card" key={persona.key}><div className={`persona-avatar avatar-${persona.key}`}>{persona.name[0]}</div><h3>{persona.name}</h3><p>{persona.description}</p><button className="primary" disabled={seed.isPending} onClick={() => seed.mutate(persona.key)}>Use {persona.name}</button></article>)}</div>{seed.error && <InlineError message={seed.error.message} />}</section>}
+    {mode === "csv" && <section className="surface-card page-stack"><div><p className="section-kicker">CSV IMPORT</p><h2>Upload, preview, then confirm</h2><p className="muted">Expected columns: date, amount, direction, description, account_name.</p></div><form className="upload-box" onSubmit={(event) => { event.preventDefault(); const file = new FormData(event.currentTarget).get("file"); if (file instanceof File) upload.mutate(file); }}><label>Transaction CSV<input name="file" type="file" accept=".csv,text/csv" required /></label><button className="primary" disabled={upload.isPending}>Preview file</button></form>{upload.error && <InlineError message={upload.error.message} />}{preview && <><div className="import-summary"><b>{preview.total_rows} rows</b><span className="positive">{preview.valid_rows} valid</span><span className={preview.invalid_rows ? "negative" : ""}>{preview.invalid_rows} invalid</span></div><div className="table-wrap"><table><thead><tr>{preview.headers.map((header) => <th key={header}>{header}</th>)}<th>Validation</th></tr></thead><tbody>{preview.rows.map((row, index) => <tr key={index}>{preview.headers.map((header) => <td key={header}>{String(row.source[header] ?? "")}</td>)}<td>{row.errors?.length ? `${row.errors.length} issue(s)` : "Ready"}</td></tr>)}</tbody></table></div><button className="primary" disabled={confirm.isPending} onClick={() => confirm.mutate()}>Confirm import</button></>}{confirm.error && <InlineError message={confirm.error.message} />}</section>}
+    {mode === "manual" && <ManualForms accounts={accounts.data?.accounts ?? []} submit={submitJson} busy={create.isPending} error={create.error?.message} />}
+    {notice && <div className="success" role="status">✓ {notice} <button className="text-button" onClick={() => router.push("/")}>Open dashboard</button></div>}
+    <p className="onboarding-note">Some predictions need more history. Confidence will sharpen as you add data; missing information is never presented as zero.</p>
+  </main></AppShell>;
+}
+
+function ManualForms({ accounts, submit, busy, error }: { accounts: Account[]; submit: (path: string, event: FormEvent<HTMLFormElement>, transform?: (data: Record<string, FormDataEntryValue>) => unknown) => void; busy: boolean; error?: string }) {
+  const [tab, setTab] = useState("account");
+  const tabs = [["account", "Account"], ["income", "Income"], ["loan", "Loan"], ["card", "Credit card"], ["transaction", "Transaction"]];
+  return <section className="surface-card page-stack"><div><p className="section-kicker">MANUAL ENTRY</p><h2>Add the essentials</h2><p className="muted">Start with an account. Loan and card details link to accounts of the matching type.</p></div><div className="tabs">{tabs.map(([value, name]) => <button className={tab === value ? "tab-active" : ""} onClick={() => setTab(value)} key={value}>{name}</button>)}</div>
+    {tab === "account" && <form className="form-grid" onSubmit={(event) => submit("/accounts", event)}><label>Account type<select name="type"><option value="checking">Checking</option><option value="savings">Savings</option><option value="loan">Loan account</option><option value="credit_card">Credit card account</option></select></label><label>Name<input name="name" required /></label><label>Current balance<input name="balance" type="number" step="0.01" required /></label><input type="hidden" name="currency" value="INR" /><Submit busy={busy} /></form>}
+    {tab === "income" && <form className="form-grid" onSubmit={(event) => submit("/income-sources", event, (v) => ({ ...v, is_variable: v.is_variable === "true", last_received_date: v.last_received_date || null }))}><label>Name<input name="name" placeholder="Salary" required /></label><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required /></label><label>Frequency<select name="frequency"><option value="monthly">Monthly</option><option value="biweekly">Biweekly</option><option value="irregular">Irregular</option></select></label><label>Variable?<select name="is_variable"><option value="false">No</option><option value="true">Yes</option></select></label><label>Last received<input name="last_received_date" type="date" /></label><Submit busy={busy} /></form>}
+    {tab === "loan" && <form className="form-grid" onSubmit={(event) => submit("/loans", event)}><AccountSelect name="account_id" accounts={accounts.filter((a) => a.type === "loan")} /><label>Principal<input name="principal" type="number" min="0.01" step="0.01" required /></label><label>Interest rate %<input name="interest_rate" type="number" min="0" step="0.01" required /></label><label>Term months<input name="term_months" type="number" min="1" required /></label><label>Start date<input name="start_date" type="date" required /></label><label>Monthly installment<input name="monthly_installment" type="number" min="0.01" step="0.01" required /></label><label>Outstanding balance<input name="outstanding_balance" type="number" min="0" step="0.01" required /></label><Submit busy={busy} /></form>}
+    {tab === "card" && <form className="form-grid" onSubmit={(event) => submit("/credit-cards", event, (v) => ({ ...v, apr: v.apr || null }))}><AccountSelect name="account_id" accounts={accounts.filter((a) => a.type === "credit_card")} /><label>Credit limit<input name="credit_limit" type="number" min="0.01" step="0.01" required /></label><label>Current balance<input name="current_balance" type="number" min="0" step="0.01" required /></label><label>Statement day<input name="statement_date" type="number" min="1" max="31" required /></label><label>Minimum due<input name="minimum_due" type="number" min="0" step="0.01" required /></label><label>APR %<input name="apr" type="number" min="0" step="0.01" /></label><Submit busy={busy} /></form>}
+    {tab === "transaction" && <form className="form-grid" onSubmit={(event) => submit("/transactions", event, (v) => ({ transactions: [{ account_id: v.account_id, txn_date: v.txn_date, amount: v.amount, direction: v.direction, raw_description: v.raw_description }] }))}><AccountSelect name="account_id" accounts={accounts} /><label>Date<input name="txn_date" type="date" required /></label><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required /></label><label>Direction<select name="direction"><option value="debit">Expense</option><option value="credit">Income</option></select></label><label className="span-2">Description<input name="raw_description" required /></label><Submit busy={busy} /></form>}
+    {error && <InlineError message={error} />}
+  </section>;
+}
+function AccountSelect({ name, accounts }: { name: string; accounts: Account[] }) { return <label>Linked account<select name={name} required><option value="">Select an account</option>{accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>; }
+function Submit({ busy }: { busy: boolean }) { return <div className="span-2"><button className="primary" disabled={busy}>Save details</button></div>; }
+export default function OnboardingPage() { return <Suspense fallback={<main className="loading">Opening setup…</main>}><OnboardingWorkspace /></Suspense>; }

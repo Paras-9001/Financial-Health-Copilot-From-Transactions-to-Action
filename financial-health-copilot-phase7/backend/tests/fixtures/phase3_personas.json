@@ -1,0 +1,110 @@
+{
+  "ananya": {
+    "as_of_date": "2026-09-26",
+    "history_days": 88,
+    "spending_cv": "0.86",
+    "recurring_coverage_pct": "81.98",
+    "confidence": "low",
+    "sample_points": {
+      "0": {
+        "date": "2026-09-27",
+        "projected_balance": "8628.41",
+        "lower_bound": "8309.42",
+        "upper_bound": "8947.40",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "371.59"
+      },
+      "14": {
+        "date": "2026-10-11",
+        "projected_balance": "-19573.86",
+        "lower_bound": "-20809.32",
+        "upper_bound": "-18338.41",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "371.59"
+      },
+      "29": {
+        "date": "2026-10-26",
+        "projected_balance": "24902.27",
+        "lower_bound": "23155.08",
+        "upper_bound": "26649.47",
+        "scheduled_inflow": "60000.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "371.59"
+      }
+    }
+  },
+  "rohit": {
+    "as_of_date": "2026-09-18",
+    "history_days": 90,
+    "spending_cv": "1.35",
+    "recurring_coverage_pct": "75.47",
+    "confidence": "low",
+    "sample_points": {
+      "0": {
+        "date": "2026-09-19",
+        "projected_balance": "17889.50",
+        "lower_bound": "17713.72",
+        "upper_bound": "18065.28",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "110.50"
+      },
+      "14": {
+        "date": "2026-10-03",
+        "projected_balance": "16342.50",
+        "lower_bound": "15661.69",
+        "upper_bound": "17023.31",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "110.50"
+      },
+      "29": {
+        "date": "2026-10-18",
+        "projected_balance": "2685.00",
+        "lower_bound": "1722.19",
+        "upper_bound": "3647.81",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "110.50"
+      }
+    }
+  },
+  "meera": {
+    "as_of_date": "2026-09-18",
+    "history_days": 90,
+    "spending_cv": "0.00",
+    "recurring_coverage_pct": "100.00",
+    "confidence": "high",
+    "sample_points": {
+      "0": {
+        "date": "2026-09-19",
+        "projected_balance": "245000.00",
+        "lower_bound": "245000.00",
+        "upper_bound": "245000.00",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "0.00"
+      },
+      "14": {
+        "date": "2026-10-03",
+        "projected_balance": "357000.00",
+        "lower_bound": "357000.00",
+        "upper_bound": "357000.00",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "0.00",
+        "unscheduled_spend": "0.00"
+      },
+      "29": {
+        "date": "2026-10-18",
+        "projected_balance": "338975.00",
+        "lower_bound": "338975.00",
+        "upper_bound": "338975.00",
+        "scheduled_inflow": "0.00",
+        "scheduled_outflow": "18025.00",
+        "unscheduled_spend": "0.00"
+      }
+    }
+  }
+}

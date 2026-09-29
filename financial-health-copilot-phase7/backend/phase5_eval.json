@@ -1,0 +1,215 @@
+{
+  "count": 20,
+  "passed": 20,
+  "results": [
+    {
+      "question": "Where did I spend the most last month?",
+      "intent": "spending",
+      "tools": [
+        "get_spending_by_category"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "Why did my spending increase?",
+      "intent": "spending",
+      "tools": [
+        "get_spending_by_category"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "How much am I saving?",
+      "intent": "savings",
+      "tools": [
+        "get_financial_summary"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "How can I save \u20b910000 this month?",
+      "intent": "spending",
+      "tools": [
+        "get_spending_by_category"
+      ],
+      "entities": {
+        "amount": "10000",
+        "savings_goal": "10000"
+      },
+      "passed": true
+    },
+    {
+      "question": "How much debt do I have?",
+      "intent": "debt",
+      "tools": [
+        "get_debt_summary"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "What happens if I pay \u20b95000 extra on my loan?",
+      "intent": "what_if",
+      "tools": [
+        "simulate_action"
+      ],
+      "entities": {
+        "amount": "5000",
+        "action_type": "extra_debt_payment"
+      },
+      "passed": true
+    },
+    {
+      "question": "Will I have enough money at the end of the month?",
+      "intent": "cash_flow",
+      "tools": [
+        "get_cash_flow_forecast"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "What bills are coming up?",
+      "intent": "cash_flow",
+      "tools": [
+        "get_recurring_expenses"
+      ],
+      "entities": {
+        "cash_flow_mode": "recurring"
+      },
+      "passed": true
+    },
+    {
+      "question": "Can I afford a \u20b930000 laptop next week?",
+      "intent": "affordability",
+      "tools": [
+        "calculate_affordability"
+      ],
+      "entities": {
+        "amount": "30000",
+        "target_date": "2026-10-05"
+      },
+      "passed": true
+    },
+    {
+      "question": "What should I focus on this month?",
+      "intent": "recommendation",
+      "tools": [
+        "get_recommendations"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "What if I cancel my subscription?",
+      "intent": "what_if",
+      "tools": [
+        "simulate_action"
+      ],
+      "entities": {
+        "action_type": "modify_recurring",
+        "cancel": "True"
+      },
+      "passed": true
+    },
+    {
+      "question": "What if I reduce dining by \u20b93000?",
+      "intent": "what_if",
+      "tools": [
+        "simulate_action"
+      ],
+      "entities": {
+        "amount": "3000",
+        "category": "Dining",
+        "action_type": "reduce_spending"
+      },
+      "passed": true
+    },
+    {
+      "question": "What if my income falls 10%?",
+      "intent": "what_if",
+      "tools": [
+        "simulate_action"
+      ],
+      "entities": {
+        "percent": "-10",
+        "action_type": "change_income"
+      },
+      "passed": true
+    },
+    {
+      "question": "Can I save \u20b95000 monthly?",
+      "intent": "what_if",
+      "tools": [
+        "simulate_action"
+      ],
+      "entities": {
+        "amount": "5000",
+        "action_type": "increase_savings"
+      },
+      "passed": true
+    },
+    {
+      "question": "How much did I spend on dining?",
+      "intent": "spending",
+      "tools": [
+        "get_spending_by_category"
+      ],
+      "entities": {
+        "category": "Dining"
+      },
+      "passed": true
+    },
+    {
+      "question": "Show my credit card utilization",
+      "intent": "debt",
+      "tools": [
+        "get_debt_summary"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "Tell me my current cash flow",
+      "intent": "cash_flow",
+      "tools": [
+        "get_cash_flow_forecast"
+      ],
+      "entities": {
+        "category": "Rent"
+      },
+      "passed": true
+    },
+    {
+      "question": "Do I have any upcoming risk?",
+      "intent": "risk",
+      "tools": [
+        "get_risk_events"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "How am I doing financially?",
+      "intent": "general",
+      "tools": [
+        "get_financial_summary",
+        "get_risk_events"
+      ],
+      "entities": {},
+      "passed": true
+    },
+    {
+      "question": "How is my investment portfolio doing?",
+      "intent": "general/unclear",
+      "tools": [],
+      "entities": {
+        "unsupported_area": "investment data"
+      },
+      "passed": true
+    }
+  ]
+}
